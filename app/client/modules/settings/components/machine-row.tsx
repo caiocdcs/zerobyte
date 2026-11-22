@@ -1,5 +1,5 @@
 import { AlertTriangle, ChevronDown, Laptop, RotateCw, Server, ShieldOff, Trash2 } from "lucide-react";
-import { useRef } from "react";
+import { useRef, type RefObject } from "react";
 import type { ListAgentsResponse } from "~/client/api-client/types.gen";
 import { Badge } from "~/client/components/ui/badge";
 import { Button } from "~/client/components/ui/button";
@@ -10,10 +10,13 @@ import {
 	DropdownMenuSeparator,
 	DropdownMenuTrigger,
 } from "~/client/components/ui/dropdown-menu";
+import { getMachineUpdate } from "~/client/lib/agent-updates";
 import { useTimeFormat } from "~/client/lib/datetime";
 import { getMachineDisplayName } from "~/lib/machine-name";
 import { getMachineStatus, machineStatusLabels } from "~/client/lib/machine-status";
 import { cn } from "~/client/lib/utils";
+
+import { MachineUpdate } from "./machine-update";
 
 type Agent = ListAgentsResponse[number];
 
@@ -30,8 +33,17 @@ export type MachineAction = "rotate" | "revoke" | "delete";
 export function MachineRow({
 	agent,
 	onAction,
+	onUpdate,
+	updatePending = false,
 }: {
 	agent: Agent;
+	onUpdate?: (
+		agent: Agent,
+		tag: string,
+		trigger: HTMLButtonElement,
+		actions: RefObject<HTMLButtonElement | null>,
+	) => void;
+	updatePending?: boolean;
 	onAction?: (action: MachineAction, agent: Agent, trigger: HTMLElement) => void;
 }) {
 	const actionsTriggerRef = useRef<HTMLButtonElement>(null);
@@ -43,6 +55,7 @@ export function MachineRow({
 	const statusLabel = machineStatusLabels[status];
 	const isLocal = agent.kind === "local";
 	const isRevoked = status === "revoked";
+	const update = onAction ? getMachineUpdate(agent) : null;
 	const isInsecure = !isLocal && presentation.connectionSecurity === "insecure";
 	const lastSeen = agent.lastSeenAt === null ? "Never" : formatDateTime(agent.lastSeenAt);
 	const rootsPrefix = status === "online" ? "Allowed locations" : "Allowed locations (last reported)";
@@ -74,6 +87,8 @@ export function MachineRow({
 							<span className="size-1.5 rounded-full bg-current" aria-hidden="true" />
 							{statusLabel}
 						</Badge>
+						{update?.availability === "required" && <Badge variant="destructive">Update required</Badge>}
+						{update?.availability === "available" && <Badge variant="secondary">Update available</Badge>}
 						{isInsecure && (
 							<Badge variant="outline" className={statusStyles.degraded}>
 								<ShieldOff className="size-3" aria-hidden="true" />
@@ -81,6 +96,13 @@ export function MachineRow({
 							</Badge>
 						)}
 					</div>
+					{update && onUpdate && (
+						<MachineUpdate
+							agent={agent}
+							pending={updatePending}
+							onRequest={(tag, trigger) => onUpdate(agent, tag, trigger, actionsTriggerRef)}
+						/>
+					)}
 					{isInsecure && (
 						<p className="flex items-start gap-2 text-sm text-amber-700 dark:text-amber-400">
 							<AlertTriangle className="mt-0.5 size-4 shrink-0" aria-hidden="true" />

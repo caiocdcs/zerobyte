@@ -11,8 +11,8 @@ import {
 	getAdminUsersOptions,
 	getPasswordLoginStatusOptions,
 	getRegistrationStatusOptions,
-	listAgentsOptions,
 } from "~/client/api-client/@tanstack/react-query.gen";
+import { organizationAgentsOptions } from "~/client/lib/agent-updates";
 import { getOrigin } from "~/client/functions/get-origin";
 import { getActiveSettingsScope, getSettingsScopeAvailability } from "~/client/modules/settings/settings-scope";
 import type { Permission } from "~/lib/permission-policy";
@@ -56,8 +56,10 @@ export const Route = createFileRoute("/(dashboard)/settings/")({
 			}
 
 			let machinesPromise;
-			if (context.permissions["agents.manage"] && context.features.remoteAgents) {
-				machinesPromise = context.queryClient.ensureQueryData(listAgentsOptions());
+			if (context.activeOrganizationId && context.permissions["agents.manage"] && context.features.remoteAgents) {
+				machinesPromise = context.queryClient.prefetchQuery(
+					organizationAgentsOptions(context.activeOrganizationId),
+				);
 			}
 
 			let ssoSettingsPromise;

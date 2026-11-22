@@ -4,13 +4,13 @@ import { ArrowRight, Loader2, MonitorCog } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import {
 	createRemoteAgentMutation,
-	listAgentsOptions,
 	rotateRemoteAgentTokenMutation,
 } from "~/client/api-client/@tanstack/react-query.gen";
 import type { CreateRemoteAgentResponse, ListAgentsResponse } from "~/client/api-client/types.gen";
 import { Alert, AlertDescription, AlertTitle } from "~/client/components/ui/alert";
 import { Button } from "~/client/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "~/client/components/ui/card";
+import { organizationAgentsOptions } from "~/client/lib/agent-updates";
 import { getMachineDisplayName } from "~/lib/machine-name";
 import { CreateMachineForm, DeploymentInstructions } from "../components/machine-setup-forms";
 import { MachineConnectionSuccess } from "../components/machine-connection-success";
@@ -20,7 +20,7 @@ type Enrollment = Pick<Agent, "id" | "credentialVersion" | "name"> & { issuedAt:
 
 const steps = ["Name your machine", "Connect", "Connected"];
 
-export function MachineSetupPage({ agentId }: { agentId?: string }) {
+export function MachineSetupPage({ agentId, organizationId }: { agentId?: string; organizationId: string }) {
 	const navigate = useNavigate();
 	const [targetId, setTargetId] = useState(agentId);
 	const [credential, setCredential] = useState<CreateRemoteAgentResponse | null>(null);
@@ -29,7 +29,7 @@ export function MachineSetupPage({ agentId }: { agentId?: string }) {
 	const [now, setNow] = useState(Date.now);
 
 	const agentsQuery = useQuery({
-		...listAgentsOptions(),
+		...organizationAgentsOptions(organizationId),
 		refetchInterval: targetId && !connected ? 2_000 : false,
 		refetchIntervalInBackground: false,
 	});

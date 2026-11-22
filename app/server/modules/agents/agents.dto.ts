@@ -19,7 +19,10 @@ const agentUpdateSchema = z.object({
 		.nullable(),
 });
 
-export const requestAgentUpdateBody = z.strictObject({ targetTag: z.string().min(1).max(AGENT_UPDATE_TAG_MAX_LENGTH) });
+export const requestAgentUpdateBody = z.strictObject({
+	targetTag: z.string().min(1).max(AGENT_UPDATE_TAG_MAX_LENGTH),
+	credentialVersion: z.int().nonnegative(),
+});
 
 export const publicAgentSchema = z.object({
 	id: z.string(),

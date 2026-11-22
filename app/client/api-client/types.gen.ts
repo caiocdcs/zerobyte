@@ -7089,6 +7089,7 @@ export type MaintainRemoteAgentResponse = MaintainRemoteAgentResponses[keyof Mai
 export type RequestAgentUpdateData = {
     body: {
         targetTag: string;
+        credentialVersion: number;
     };
     path: {
         agentId: string;

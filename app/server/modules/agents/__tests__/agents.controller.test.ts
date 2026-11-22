@@ -52,6 +52,15 @@ describe("remote agent enrollment API", () => {
 		expect(forbidden.status).toBe(403);
 	});
 
+	test("identifies the authenticated organization even when there are no remote agents", async () => {
+		const response = await app.request("/api/v1/agents", { headers: admin.headers });
+
+		expect(response.status).toBe(200);
+		expect(response.headers.get("X-Zerobyte-Organization-Id")).toBe(admin.organizationId);
+		expect(response.headers.get("Cache-Control")).toBe("no-store");
+		expect(await response.json()).toEqual([]);
+	});
+
 	test("returns the enrollment token once and never leaks its hash through listing", async () => {
 		const created = await app.request("/api/v1/agents", {
 			method: "POST",

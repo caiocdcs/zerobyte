@@ -1,5 +1,5 @@
 import { afterEach, expect, test, vi } from "vitest";
-import { listAgentsOptions } from "~/client/api-client/@tanstack/react-query.gen";
+import { organizationAgentsOptions } from "~/client/lib/agent-updates";
 import type { ListAgentsResponse } from "~/client/api-client/types.gen";
 import { HttpResponse, http, server } from "~/test/msw/server";
 import { act, cleanup, fireEvent, render, screen, userEvent, waitFor } from "~/test/test-utils";
@@ -17,6 +17,9 @@ vi.mock("~/client/lib/datetime", () => ({
 }));
 
 type Agent = ListAgentsResponse[number];
+
+const listedAgents = (agents: ListAgentsResponse, organizationId = "org-one") =>
+	HttpResponse.json(agents, { headers: { "X-Zerobyte-Organization-Id": organizationId } });
 
 const emptyCapabilities: Agent["capabilities"] = {
 	hostname: null,
@@ -82,7 +85,7 @@ const startNewMachine = async () => {
 
 const refreshAgents = async (queryClient: ReturnType<typeof render>["queryClient"]) => {
 	await act(async () => {
-		await queryClient.refetchQueries(listAgentsOptions());
+		await queryClient.refetchQueries(organizationAgentsOptions("org-one"));
 	});
 };
 
@@ -90,7 +93,7 @@ test("creates a named machine and lets both deployment methods use the same sing
 	let calls = 0;
 	let submittedName = "";
 	server.use(
-		http.get("/api/v1/agents", () => HttpResponse.json(calls ? [localAgent, createAgent()] : [localAgent])),
+		http.get("/api/v1/agents", () => listedAgents(calls ? [localAgent, createAgent()] : [localAgent])),
 		http.post("/api/v1/agents", async ({ request }) => {
 			calls++;
 			submittedName = ((await request.json()) as { name: string }).name;
@@ -98,7 +101,7 @@ test("creates a named machine and lets both deployment methods use the same sing
 		}),
 	);
 	const copy = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue();
-	const { queryClient, unmount } = render(<MachineSetupPage />);
+	const { queryClient, unmount } = render(<MachineSetupPage organizationId="org-one" />);
 	await startNewMachine();
 
 	expect(submittedName).toBe("Archive node");
@@ -131,8 +134,8 @@ test("creates a named machine and lets both deployment methods use the same sing
 });
 
 test.each(["archive\u0000node", "archive\u202enode"])("rejects invisible characters in machine names: %j", (name) => {
-	server.use(http.get("/api/v1/agents", () => HttpResponse.json([localAgent])));
-	render(<MachineSetupPage />);
+	server.use(http.get("/api/v1/agents", () => listedAgents([localAgent])));
+	render(<MachineSetupPage organizationId="org-one" />);
 	const input = screen.getByRole("textbox", { name: "Machine name" });
 	fireEvent.change(input, { target: { value: name } });
 	expect(input.getAttribute("aria-invalid")).toBe("true");
@@ -144,13 +147,13 @@ test("waits for the newly enrolled credential to be ready before showing success
 	let agent = createAgent({ status: "online", credentialVersion: 5 });
 	let rotations = 0;
 	server.use(
-		http.get("/api/v1/agents", () => HttpResponse.json([localAgent, agent])),
+		http.get("/api/v1/agents", () => listedAgents([localAgent, agent])),
 		http.post("/api/v1/agents/agent-remote/token/rotate", () => {
 			rotations++;
 			return HttpResponse.json(credential(createAgent({ credentialVersion: 6 })));
 		}),
 	);
-	const { queryClient } = render(<MachineSetupPage agentId="agent-remote" />);
+	const { queryClient } = render(<MachineSetupPage organizationId="org-one" agentId="agent-remote" />);
 	expect(await screen.findByText(/This disconnects the machine until you finish setup/)).toBeTruthy();
 	expect(screen.queryByRole("textbox", { name: "Machine name" })).toBeNull();
 	expect(rotations).toBe(0);
@@ -194,13 +197,13 @@ test("shows expired codes without deployment instructions and confirms before re
 	const agent = createAgent();
 	let calls = 0;
 	server.use(
-		http.get("/api/v1/agents", () => HttpResponse.json([agent])),
+		http.get("/api/v1/agents", () => listedAgents([agent])),
 		http.post("/api/v1/agents/agent-remote/token/rotate", () => {
 			calls++;
 			return HttpResponse.json(credential(agent, calls === 1 ? Date.now() + 100 : Date.now() + 900000));
 		}),
 	);
-	render(<MachineSetupPage agentId={agent.id} />);
+	render(<MachineSetupPage organizationId="org-one" agentId={agent.id} />);
 	await userEvent.click(await screen.findByRole("button", { name: /Get new connection code/ }));
 	await screen.findByRole("textbox", { name: "Connection command" });
 	expect(await screen.findByText("Connection code expired", {}, { timeout: 2500 })).toBeTruthy();
@@ -216,10 +219,10 @@ test("shows expired codes without deployment instructions and confirms before re
 test.each(["revoked", "replaced", "deleted"])("does not report success when enrollment is %s", async (change) => {
 	let agent: Agent | null = createAgent();
 	server.use(
-		http.get("/api/v1/agents", () => HttpResponse.json(agent ? [agent] : [])),
+		http.get("/api/v1/agents", () => listedAgents(agent ? [agent] : [])),
 		http.post("/api/v1/agents/agent-remote/token/rotate", () => HttpResponse.json(credential())),
 	);
-	const { queryClient } = render(<MachineSetupPage agentId="agent-remote" />);
+	const { queryClient } = render(<MachineSetupPage organizationId="org-one" agentId="agent-remote" />);
 	await userEvent.click(await screen.findByRole("button", { name: /Get new connection code/ }));
 	await screen.findByRole("textbox", { name: "Connection command" });
 	agent =
@@ -240,11 +243,11 @@ test("a failed status check offers retry and cannot declare success from cached 
 	let fail = false;
 	server.use(
 		http.get("/api/v1/agents", () =>
-			fail ? new HttpResponse(null, { status: 503 }) : HttpResponse.json([createAgent()]),
+			fail ? new HttpResponse(null, { status: 503 }) : listedAgents([createAgent()]),
 		),
 		http.post("/api/v1/agents/agent-remote/token/rotate", () => HttpResponse.json(credential())),
 	);
-	const { queryClient } = render(<MachineSetupPage agentId="agent-remote" />);
+	const { queryClient } = render(<MachineSetupPage organizationId="org-one" agentId="agent-remote" />);
 	await userEvent.click(await screen.findByRole("button", { name: /Get new connection code/ }));
 	await screen.findByRole("textbox", { name: "Connection command" });
 	fail = true;
@@ -257,21 +260,21 @@ test("a failed status check offers retry and cannot declare success from cached 
 });
 
 test("a missing machine cannot issue a new code", async () => {
-	server.use(http.get("/api/v1/agents", () => HttpResponse.json([localAgent])));
-	render(<MachineSetupPage agentId="missing" />);
+	server.use(http.get("/api/v1/agents", () => listedAgents([localAgent])));
+	render(<MachineSetupPage organizationId="org-one" agentId="missing" />);
 	expect(await screen.findByText("Machine unavailable")).toBeTruthy();
 	expect(screen.queryByRole("button", { name: /Get new connection code/ })).toBeNull();
 });
 
 test.each(["create", "rotate"])("reports a failed %s without advancing", async (action) => {
 	server.use(
-		http.get("/api/v1/agents", () => HttpResponse.json([createAgent()])),
+		http.get("/api/v1/agents", () => listedAgents([createAgent()])),
 		http.post(
 			action === "create" ? "/api/v1/agents" : "/api/v1/agents/agent-remote/token/rotate",
 			() => new HttpResponse(null, { status: 503 }),
 		),
 	);
-	render(<MachineSetupPage agentId={action === "rotate" ? "agent-remote" : undefined} />);
+	render(<MachineSetupPage organizationId="org-one" agentId={action === "rotate" ? "agent-remote" : undefined} />);
 	if (action === "create") {
 		await userEvent.type(screen.getByRole("textbox", { name: "Machine name" }), "Archive node");
 		await userEvent.click(screen.getByRole("button", { name: "Continue" }));

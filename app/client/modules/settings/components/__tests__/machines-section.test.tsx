@@ -1,8 +1,10 @@
+import { onlineManager } from "@tanstack/react-query";
 import { afterEach, describe, expect, test, vi } from "vitest";
-import { listAgentsOptions } from "~/client/api-client/@tanstack/react-query.gen";
+import { organizationAgentsOptions } from "~/client/lib/agent-updates";
 import type { ListAgentsResponse } from "~/client/api-client/types.gen";
 import { HttpResponse, http, server } from "~/test/msw/server";
 import {
+	act,
 	cleanup,
 	createTestQueryClient,
 	fireEvent,
@@ -26,6 +28,9 @@ vi.mock("~/client/lib/datetime", () => ({
 }));
 
 type Agent = ListAgentsResponse[number];
+
+const listedAgents = (agents: ListAgentsResponse, organizationId = "org-one") =>
+	HttpResponse.json(agents, { headers: { "X-Zerobyte-Organization-Id": organizationId } });
 
 const emptyCapabilities: Agent["capabilities"] = {
 	connectionSecurity: null,
@@ -69,11 +74,11 @@ afterEach(() => {
 
 describe("MachinesSection", () => {
 	test("renders preloaded machines immediately while refreshing in the background", () => {
-		server.use(http.get("/api/v1/agents", () => HttpResponse.json([localAgent])));
+		server.use(http.get("/api/v1/agents", () => listedAgents([localAgent])));
 		const queryClient = createTestQueryClient();
-		queryClient.setQueryData(listAgentsOptions().queryKey, [localAgent]);
+		queryClient.setQueryData(organizationAgentsOptions("org-one").queryKey, [localAgent]);
 
-		render(<MachinesSection />, { queryClient, withSuspense: true });
+		render(<MachinesSection organizationId="org-one" />, { queryClient, withSuspense: true });
 
 		expect(screen.getByRole("heading", { name: "Zerobyte server" })).toBeTruthy();
 		expect(screen.queryByLabelText("Loading machines")).toBeNull();
@@ -84,15 +89,15 @@ describe("MachinesSection", () => {
 		const remoteAgent = createAgent();
 		server.use(
 			http.get("/api/v1/agents", () =>
-				available ? HttpResponse.json([localAgent, remoteAgent]) : HttpResponse.json({}, { status: 503 }),
+				available ? listedAgents([localAgent, remoteAgent]) : HttpResponse.json({}, { status: 503 }),
 			),
 		);
 
-		const { queryClient } = render(<MachinesSection />);
+		const { queryClient } = render(<MachinesSection organizationId="org-one" />);
 		expect(await screen.findByRole("heading", { name: "Archive node" })).toBeTruthy();
 
 		available = false;
-		await queryClient.refetchQueries({ queryKey: listAgentsOptions().queryKey });
+		await queryClient.refetchQueries({ queryKey: organizationAgentsOptions("org-one").queryKey });
 
 		const error = await screen.findByRole("alert");
 		expect(within(error).getByText("Could not refresh machines")).toBeTruthy();
@@ -113,9 +118,9 @@ describe("MachinesSection", () => {
 				trustedRoots: [{ id: "documents", label: "Documents", canBackup: true }],
 			},
 		});
-		server.use(http.get("/api/v1/agents", () => HttpResponse.json([localAgent, remoteAgent])));
+		server.use(http.get("/api/v1/agents", () => listedAgents([localAgent, remoteAgent])));
 
-		render(<MachinesSection />);
+		render(<MachinesSection organizationId="org-one" />);
 
 		expect(await screen.findByRole("heading", { name: "Zerobyte server" })).toBeTruthy();
 		expect(screen.getByText("This Zerobyte server.")).toBeTruthy();
@@ -133,9 +138,9 @@ describe("MachinesSection", () => {
 		const unsafeAgent = createAgent({ id: "unsafe", name: unsafeName });
 		const unnamedAgent = createAgent({ id: "unnamed", name: "\u202e\u0000" });
 		const agents = [localAgent, unsafeAgent, unnamedAgent];
-		server.use(http.get("/api/v1/agents", () => HttpResponse.json(agents)));
+		server.use(http.get("/api/v1/agents", () => listedAgents(agents)));
 
-		render(<MachinesSection />);
+		render(<MachinesSection organizationId="org-one" />);
 
 		expect(await screen.findByRole("heading", { name: "Archive node" })).toBeTruthy();
 		expect(screen.getByRole("heading", { name: "Unnamed machine" })).toBeTruthy();
@@ -148,8 +153,8 @@ describe("MachinesSection", () => {
 });
 
 test("opens the dedicated wizard for new machines and reconnects", async () => {
-	server.use(http.get("/api/v1/agents", () => HttpResponse.json([localAgent, createAgent()])));
-	render(<MachinesSection />);
+	server.use(http.get("/api/v1/agents", () => listedAgents([localAgent, createAgent()])));
+	render(<MachinesSection organizationId="org-one" />);
 	await userEvent.click(await screen.findByRole("button", { name: "Connect machine" }));
 	expect(navigate).toHaveBeenCalledWith({ to: "/settings/machines/connect", search: { scope: "organization" } });
 	await userEvent.click(screen.getByRole("button", { name: "Actions for Archive node" }));
@@ -179,11 +184,11 @@ test.each([
 	"$action reports a failure and returns focus to the row actions",
 	async ({ action, title, confirm, method, endpoint }) => {
 		server.use(
-			http.get("/api/v1/agents", () => HttpResponse.json([localAgent, createAgent({ lastSeenAt: 100 })])),
+			http.get("/api/v1/agents", () => listedAgents([localAgent, createAgent({ lastSeenAt: 100 })])),
 			http[method](endpoint, () => HttpResponse.json({ message: "Unavailable" }, { status: 503 })),
 		);
 
-		render(<MachinesSection />);
+		render(<MachinesSection organizationId="org-one" />);
 		const actions = await screen.findByRole("button", { name: "Actions for Archive node" });
 		await userEvent.click(actions);
 		await userEvent.click(screen.getByRole("menuitem", { name: action }));
@@ -220,11 +225,11 @@ test.each(
 	),
 )("$action reports $format failures", async ({ action, confirm, endpoint, message, body, contentType }) => {
 	server.use(
-		http.get("/api/v1/agents", () => HttpResponse.json([localAgent, createAgent()])),
+		http.get("/api/v1/agents", () => listedAgents([localAgent, createAgent()])),
 		http.delete(endpoint, () => new HttpResponse(body, { status: 503, headers: { "Content-Type": contentType } })),
 	);
 
-	render(<MachinesSection />);
+	render(<MachinesSection organizationId="org-one" />);
 	await userEvent.click(await screen.findByRole("button", { name: "Actions for Archive node" }));
 	await userEvent.click(screen.getByRole("menuitem", { name: action }));
 	const dialog = screen.getByRole("alertdialog");
@@ -237,14 +242,14 @@ test("deletion uses the safe row name and restores focus after Cancel, Escape, a
 	const agent = createAgent({ name: "Archive\u202e\u0000 node" });
 	let removed = false;
 	server.use(
-		http.get("/api/v1/agents", () => HttpResponse.json(removed ? [localAgent] : [localAgent, agent])),
+		http.get("/api/v1/agents", () => listedAgents(removed ? [localAgent] : [localAgent, agent])),
 		http.delete("/api/v1/agents/agent-remote", () => {
 			removed = true;
 			return HttpResponse.json({ success: true });
 		}),
 	);
 
-	render(<MachinesSection />);
+	render(<MachinesSection organizationId="org-one" />);
 	const actions = await screen.findByRole("button", { name: "Actions for Archive node" });
 	for (const dismissal of ["Cancel", "Escape"]) {
 		await userEvent.click(actions);
@@ -267,9 +272,9 @@ test.each(["online", "offline"] as const)(
 	"warns about insecure HTTP for a remote machine that is %s",
 	async (status) => {
 		const remote = createAgent({ status, capabilities: { ...emptyCapabilities, connectionSecurity: "insecure" } });
-		server.use(http.get("/api/v1/agents", () => HttpResponse.json([localAgent, remote])));
+		server.use(http.get("/api/v1/agents", () => listedAgents([localAgent, remote])));
 
-		render(<MachinesSection />);
+		render(<MachinesSection organizationId="org-one" />);
 
 		expect(await screen.findByText("Insecure HTTP")).toBeTruthy();
 		expect(screen.getByText(/Use HTTPS to secure this connection/).textContent).toContain(
@@ -282,11 +287,392 @@ test.each(["secure", null] as const)(
 	"does not show an insecure warning for connection security %s",
 	async (connectionSecurity) => {
 		const remote = createAgent({ status: "online", capabilities: { ...emptyCapabilities, connectionSecurity } });
-		server.use(http.get("/api/v1/agents", () => HttpResponse.json([localAgent, remote])));
+		server.use(http.get("/api/v1/agents", () => listedAgents([localAgent, remote])));
 
-		render(<MachinesSection />);
+		render(<MachinesSection organizationId="org-one" />);
 
 		await screen.findByRole("heading", { name: "Archive node" });
 		expect(screen.queryByText("Insecure HTTP")).toBeNull();
+	},
+);
+
+const availableUpdate: Agent["update"] = {
+	protocolVersion: 2,
+	availability: "available",
+	delivery: "remote",
+	targetTag: "v1.2.3",
+	request: null,
+};
+
+test("explains a required manual update for an incompatible machine that never became ready", async () => {
+	const update: Agent["update"] = {
+		...availableUpdate,
+		protocolVersion: 1,
+		availability: "required",
+		delivery: "manual",
+	};
+	server.use(
+		http.get("/api/v1/agents", () =>
+			listedAgents([
+				{ ...localAgent, update },
+				createAgent({ lastSeenAt: 42, update }),
+				createAgent({ id: "unused", name: "Unused", update }),
+				createAgent({ id: "revoked", name: "Revoked", lastSeenAt: 42, revokedAt: 43, update }),
+			]),
+		),
+	);
+
+	render(<MachinesSection organizationId="org-one" />);
+
+	expect(await screen.findByText("Update required")).toBeTruthy();
+	expect(screen.getByText("Backups from this machine are blocked until the agent is updated.")).toBeTruthy();
+	expect(screen.getByText("Target version v1.2.3")).toBeTruthy();
+	expect(screen.getByRole("link", { name: /How to update/ }).getAttribute("href")).toMatch(
+		/remote-agents#manual-updates$/,
+	);
+	expect(screen.queryByRole("button", { name: /Update agent/ })).toBeNull();
+});
+
+test("pins an offline machine's update, blocks duplicate requests, and follows progress through reconnect", async () => {
+	let update = availableUpdate;
+	const bodies: unknown[] = [];
+	const { promise, resolve } = Promise.withResolvers<void>();
+	const staleRefresh = Promise.withResolvers<void>();
+	const refreshStarted = Promise.withResolvers<void>();
+	let holdRefresh = false;
+
+	server.use(
+		http.get("/api/v1/agents", async () => {
+			const agent = createAgent({ lastSeenAt: 42, update });
+			if (holdRefresh) {
+				holdRefresh = false;
+				refreshStarted.resolve();
+				await staleRefresh.promise;
+			}
+			return listedAgents([agent]);
+		}),
+		http.post("/api/v1/agents/agent-remote/update", async ({ request }) => {
+			bodies.push(await request.json());
+			await promise;
+			update = {
+				...update,
+				request: {
+					id: `request-${bodies.length}`,
+					targetTag: "v1.2.3",
+					status: "queued",
+					requestedAt: 100 * bodies.length,
+				},
+			};
+
+			return HttpResponse.json(update);
+		}),
+	);
+
+	const { queryClient } = render(<MachinesSection organizationId="org-one" />);
+	expect(await screen.findByText("Update available")).toBeTruthy();
+	const trigger = screen.getByRole<HTMLButtonElement>("button", { name: "Update agent for Archive node" });
+	trigger.focus();
+	await userEvent.keyboard("{Enter}");
+	const dialog = screen.getByRole("alertdialog", { name: "Update Archive node?" });
+	expect(within(dialog).getByText(/Request agent v1\.2\.3/)).toBeTruthy();
+
+	const confirm = within(dialog).getByRole<HTMLButtonElement>("button", { name: "Queue update" });
+	await userEvent.click(confirm);
+	expect(confirm.disabled).toBe(true);
+	expect(confirm.getAttribute("aria-busy")).toBe("true");
+	const cancel = within(dialog).getByRole<HTMLButtonElement>("button", { name: "Cancel" });
+	expect(cancel.getAttribute("aria-disabled")).toBe("true");
+	expect(document.activeElement).toBe(cancel);
+
+	await userEvent.click(confirm);
+	await waitFor(() => expect(bodies).toEqual([{ targetTag: "v1.2.3", credentialVersion: 1 }]));
+	await userEvent.click(cancel);
+	await userEvent.keyboard("{Escape}");
+	expect(screen.getByRole("alertdialog")).toBe(dialog);
+
+	holdRefresh = true;
+	const refresh = queryClient.refetchQueries(organizationAgentsOptions("org-one"));
+	await refreshStarted.promise;
+
+	resolve();
+	expect(await screen.findByText(/queued. Waiting for the agent to check in/)).toBeTruthy();
+	expect(trigger.disabled).toBe(true);
+	await waitFor(() =>
+		expect(document.activeElement).toBe(screen.getByRole("button", { name: "Actions for Archive node" })),
+	);
+
+	await act(async () => {
+		staleRefresh.resolve();
+		await refresh;
+	});
+	expect(screen.getByText(/queued. Waiting for the agent to check in/)).toBeTruthy();
+	expect(trigger.disabled).toBe(true);
+
+	const request = { id: "request-1", targetTag: "v1.2.3", requestedAt: 100 };
+	update = { ...update, request: { ...request, status: "started" } };
+	await queryClient.refetchQueries(organizationAgentsOptions("org-one"));
+	expect(await screen.findByText(/started. Zerobyte will confirm completion/)).toBeTruthy();
+	expect(trigger.disabled).toBe(true);
+
+	update = { ...update, request: { ...request, status: "failed" } };
+	await queryClient.refetchQueries(organizationAgentsOptions("org-one"));
+	expect(await screen.findByText("Update to v1.2.3 failed.")).toBeTruthy();
+	const retry = screen.getByRole<HTMLButtonElement>("button", { name: "Retry update for Archive node" });
+	await waitFor(() => expect(retry.disabled).toBe(false));
+	await userEvent.click(retry);
+	expect(screen.getByRole("alertdialog", { name: "Update Archive node?" })).toBeTruthy();
+	await userEvent.keyboard("{Escape}");
+	await waitFor(() => expect(document.activeElement).toBe(retry));
+
+	await userEvent.click(retry);
+	await userEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Queue update" }));
+	expect(await screen.findByText(/queued. Waiting for the agent to check in/)).toBeTruthy();
+	expect(bodies).toEqual([
+		{ targetTag: "v1.2.3", credentialVersion: 1 },
+		{ targetTag: "v1.2.3", credentialVersion: 1 },
+	]);
+
+	update = {
+		...update,
+		availability: "none",
+		delivery: null,
+		targetTag: null,
+		request: { ...request, id: "request-2", status: "completed", requestedAt: 200 },
+	};
+	await queryClient.refetchQueries(organizationAgentsOptions("org-one"));
+	expect(await screen.findByText("Update to v1.2.3 completed. The updated agent reconnected.")).toBeTruthy();
+	expect(screen.queryByText("Update available")).toBeNull();
+});
+
+test.each([
+	{ status: 409, refreshFails: false, nextTag: "v1.2.3" },
+	{ status: 409, refreshFails: true, nextTag: "v1.2.4" },
+])(
+	"handles HTTP $status after loading clears (refresh fails: $refreshFails)",
+	async ({ status, refreshFails, nextTag }) => {
+		let failRefresh = refreshFails;
+		const message = "Update request rejected";
+		const bodies: unknown[] = [];
+		let updated = false;
+		server.use(
+			http.get("/api/v1/agents", () => {
+				if (updated && failRefresh) return HttpResponse.json({}, { status: 503 });
+
+				const update = { ...availableUpdate, targetTag: updated ? nextTag : availableUpdate.targetTag };
+				return listedAgents([createAgent({ lastSeenAt: 42, update })]);
+			}),
+			http.post("/api/v1/agents/agent-remote/update", async ({ request }) => {
+				bodies.push(await request.json());
+				updated = true;
+				return HttpResponse.json({ message, status: 500 }, { status });
+			}),
+		);
+
+		const { queryClient } = render(<MachinesSection organizationId="org-one" />);
+		await userEvent.click(await screen.findByRole("button", { name: "Update agent for Archive node" }));
+		const dialog = screen.getByRole("alertdialog");
+		const confirm = within(dialog).getByRole<HTMLButtonElement>("button", { name: "Queue update" });
+		await userEvent.click(confirm);
+
+		expect((await within(dialog).findByRole("alert")).textContent).toBe(message);
+		await waitFor(() =>
+			expect(within(confirm).getByText("Queue update").classList.contains("invisible")).toBe(false),
+		);
+		expect(confirm.disabled).toBe(true);
+		await userEvent.click(confirm);
+
+		expect(bodies).toEqual([{ targetTag: "v1.2.3", credentialVersion: 1 }]);
+		if (refreshFails) await screen.findByText("Could not refresh machines");
+		failRefresh = false;
+		await act(async () => {
+			await queryClient.refetchQueries(organizationAgentsOptions("org-one"));
+		});
+		expect(within(dialog).getByText(/Request agent v1\.2\.3/)).toBeTruthy();
+		expect(confirm.disabled).toBe(true);
+	},
+);
+
+test("an offline browser submission fails once and can be dismissed without submitting on reconnect", async () => {
+	const post = vi.fn(() => HttpResponse.error());
+	server.use(
+		http.get("/api/v1/agents", () => listedAgents([createAgent({ lastSeenAt: 42, update: availableUpdate })])),
+		http.post("/api/v1/agents/agent-remote/update", post),
+	);
+
+	const { queryClient } = render(<MachinesSection organizationId="org-one" />);
+	const trigger = await screen.findByRole("button", { name: "Update agent for Archive node" });
+	await userEvent.click(trigger);
+	const dialog = screen.getByRole("alertdialog");
+
+	onlineManager.setOnline(false);
+	try {
+		await userEvent.click(within(dialog).getByRole("button", { name: "Queue update" }));
+		expect((await within(dialog).findByRole("alert")).textContent).toMatch(/Could not request an agent update/);
+		await userEvent.keyboard("{Escape}");
+		await waitFor(() => expect(document.activeElement).toBe(trigger));
+	} finally {
+		onlineManager.setOnline(true);
+	}
+
+	await queryClient.resumePausedMutations();
+	expect(post).toHaveBeenCalledTimes(1);
+	expect(screen.queryByRole("alertdialog")).toBeNull();
+});
+
+test("preserves the verification error while the pinned offer is absent and retries when it returns", async () => {
+	let update = availableUpdate;
+	const message = "Could not verify the release. Try again later.";
+	const bodies: unknown[] = [];
+	server.use(
+		http.get("/api/v1/agents", () => listedAgents([createAgent({ lastSeenAt: 42, update })])),
+		http.post("/api/v1/agents/agent-remote/update", async ({ request }) => {
+			bodies.push(await request.json());
+			update = { ...availableUpdate, availability: "none", delivery: null, targetTag: null };
+			return HttpResponse.json({ message }, { status: 503 });
+		}),
+	);
+
+	const { queryClient } = render(<MachinesSection organizationId="org-one" />);
+	await userEvent.click(await screen.findByRole("button", { name: "Update agent for Archive node" }));
+	const dialog = screen.getByRole("alertdialog");
+	const confirm = within(dialog).getByRole<HTMLButtonElement>("button", { name: "Queue update" });
+	await userEvent.click(confirm);
+
+	await waitFor(() => expect(screen.queryByText("Update available")).toBeNull());
+	expect((await within(dialog).findByRole("alert")).textContent).toBe(message);
+	expect(confirm.disabled).toBe(true);
+
+	update = { ...availableUpdate, targetTag: "v1.2.4" };
+	await act(async () => {
+		await queryClient.refetchQueries(organizationAgentsOptions("org-one"));
+	});
+	await waitFor(() => expect(within(dialog).getByRole("alert").textContent).toMatch(/offer changed/));
+	expect(confirm.disabled).toBe(true);
+	await userEvent.click(confirm);
+	expect(bodies).toEqual([{ targetTag: "v1.2.3", credentialVersion: 1 }]);
+
+	update = availableUpdate;
+	await act(async () => {
+		await queryClient.refetchQueries(organizationAgentsOptions("org-one"));
+	});
+	await waitFor(() => expect(confirm.disabled).toBe(false));
+	expect(within(dialog).getByRole("alert").textContent).toBe(message);
+	await userEvent.click(confirm);
+	await waitFor(() =>
+		expect(bodies).toEqual([
+			{ targetTag: "v1.2.3", credentialVersion: 1 },
+			{ targetTag: "v1.2.3", credentialVersion: 1 },
+		]),
+	);
+});
+
+test("keeps the correct cached machines after A → B → A with a wrong-session local-only response", async () => {
+	let response = () => listedAgents([createAgent()]);
+	server.use(http.get("/api/v1/agents", () => response()));
+
+	const { queryClient, rerender } = render(<MachinesSection organizationId="org-one" />);
+	await screen.findByRole("heading", { name: "Archive node" });
+
+	response = () => listedAgents([localAgent], "org-two");
+	rerender(<MachinesSection organizationId="org-two" />);
+	await screen.findByText("No remote machines");
+	expect(screen.queryByRole("heading", { name: "Archive node" })).toBeNull();
+
+	response = () => listedAgents([{ ...localAgent, name: "Unexpected server" }], "org-two");
+	rerender(<MachinesSection organizationId="org-one" />);
+	await screen.findByText("Could not refresh machines");
+	expect(screen.getByRole("heading", { name: "Archive node" })).toBeTruthy();
+
+	response = () => HttpResponse.json({}, { status: 503 });
+	await act(async () => {
+		await queryClient.refetchQueries(organizationAgentsOptions("org-one"));
+	});
+	expect(screen.getByText("Showing the last known details.")).toBeTruthy();
+	expect(screen.getByRole("heading", { name: "Archive node" })).toBeTruthy();
+	expect(screen.queryByRole("heading", { name: "Unexpected server" })).toBeNull();
+});
+
+test("switches organizations during a slow refresh even when the new organization's request fails", async () => {
+	const agentA = createAgent({ lastSeenAt: 42, update: availableUpdate });
+	const agentB = createAgent({ organizationId: "org-two", name: "Machine B" });
+	const slowRefresh = Promise.withResolvers<void>();
+	const refreshStarted = Promise.withResolvers<void>();
+	let requests = 0;
+
+	server.use(
+		http.get("/api/v1/agents", async () => {
+			switch (++requests) {
+				case 1:
+					return listedAgents([agentA]);
+				case 2:
+					refreshStarted.resolve();
+					await slowRefresh.promise;
+					return listedAgents([agentB], "org-two");
+				case 3:
+					return HttpResponse.json({}, { status: 503 });
+				default:
+					return listedAgents([agentB], "org-two");
+			}
+		}),
+	);
+
+	const { queryClient, rerender } = render(<MachinesSection organizationId="org-one" />);
+	await userEvent.click(await screen.findByRole("button", { name: "Update agent for Archive node" }));
+	expect(screen.getByRole("alertdialog")).toBeTruthy();
+	const refresh = queryClient.refetchQueries(organizationAgentsOptions("org-one"));
+	await refreshStarted.promise;
+
+	rerender(<MachinesSection organizationId="org-two" />);
+	expect(screen.queryByRole("alertdialog")).toBeNull();
+	expect(screen.queryByRole("heading", { name: "Archive node" })).toBeNull();
+	await screen.findByText("Could not refresh machines");
+	slowRefresh.resolve();
+	await refresh;
+
+	expect(screen.queryByRole("heading", { name: "Archive node" })).toBeNull();
+	expect(screen.queryByRole("heading", { name: "Machine B" })).toBeNull();
+	expect(screen.queryByRole("button", { name: /Update agent|Actions for/ })).toBeNull();
+
+	await userEvent.click(screen.getByRole("button", { name: "Retry" }));
+	expect(await screen.findByRole("heading", { name: "Machine B" })).toBeTruthy();
+	expect(screen.queryByRole("heading", { name: "Archive node" })).toBeNull();
+});
+
+test.each(["removed", "rotated", "revoked"] as const)(
+	"keeps confirmation visible and restores focus when its machine is %s",
+	async (change) => {
+		const agent = createAgent({ lastSeenAt: 42, update: availableUpdate });
+		let agents = [agent];
+		const post = vi.fn(() => HttpResponse.json({}));
+		server.use(
+			http.get("/api/v1/agents", () => listedAgents(agents)),
+			http.post("/api/v1/agents/agent-remote/update", post),
+		);
+
+		const { queryClient } = render(<MachinesSection organizationId="org-one" />);
+		await userEvent.click(await screen.findByRole("button", { name: "Update agent for Archive node" }));
+		const dialog = screen.getByRole("alertdialog");
+		switch (change) {
+			case "removed":
+				agents = [];
+				break;
+			case "rotated":
+				agents = [{ ...agent, credentialVersion: 2, lastSeenAt: null }];
+				break;
+			case "revoked":
+				agents = [{ ...agent, revokedAt: 43 }];
+				break;
+		}
+		await queryClient.refetchQueries(organizationAgentsOptions("org-one"));
+
+		expect((await within(dialog).findByRole("alert")).textContent).toMatch(/offer changed/);
+		const confirm = within(dialog).getByRole<HTMLButtonElement>("button", { name: "Queue update" });
+		expect(confirm.disabled).toBe(true);
+		await userEvent.click(confirm);
+		expect(post).not.toHaveBeenCalled();
+
+		await userEvent.keyboard("{Escape}");
+		const fallback = change === "removed" ? "Connect machine" : "Actions for Archive node";
+		await waitFor(() => expect(document.activeElement).toBe(screen.getByRole("button", { name: fallback })));
 	},
 );

@@ -83,11 +83,16 @@ export const agentsController = new Hono()
 	.use(requireAuth)
 	.use(requirePermission("agents.manage"))
 	.post("/:agentId/update", requestAgentUpdateDto, validator("json", requestAgentUpdateBody), async (c) => {
-		const { targetTag } = c.req.valid("json");
+		const { targetTag, credentialVersion } = c.req.valid("json");
 		c.req.raw.signal.throwIfAborted();
 
 		const update = await runEffectPromise(
-			agentUpdates.requestUpdate(c.get("authorizationGrant"), c.req.param("agentId"), targetTag),
+			agentUpdates.requestUpdate(
+				c.get("authorizationGrant"),
+				c.req.param("agentId"),
+				targetTag,
+				credentialVersion,
+			),
 			{ signal: c.req.raw.signal },
 		);
 
@@ -105,6 +110,8 @@ export const agentsController = new Hono()
 			signal: c.req.raw.signal,
 		});
 
+		c.header("X-Zerobyte-Organization-Id", organizationId);
+		c.header("Cache-Control", "no-store");
 		return c.json<ListAgentsDto>(agents, 200);
 	})
 	.post("/", createAgentDto, validator("json", createAgentBody), async (c) => {
